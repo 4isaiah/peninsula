@@ -25,21 +25,23 @@ final class FloatingPaletteWindow: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+// MARK: - Container
+
+final class PaletteDragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
 // MARK: - View
 
 struct FloatingPaletteView: View {
     @Bindable var drawingState: DrawingState
     var overlayController: OverlayController?
-    var moveWindow: ((NSPoint) -> Void)?
     var refocusCanvas: (() -> Void)?
 
     @State private var expanded = true
-    @State private var locked = false
-
-    private let quickColors: [NSColor] = [
-        .systemRed, .systemOrange, .systemYellow, .systemGreen,
-        .systemBlue, .systemPurple, .white, .black,
-    ]
+    @State private var dragMouseStart: NSPoint?
+    @State private var dragOriginStart: NSPoint?
+    @State private var suppressTap = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -47,48 +49,93 @@ struct FloatingPaletteView: View {
 
             if expanded {
                 expandedContent
-                    .transition(.opacity)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .padding(5)
         .background(.ultraThinMaterial, in: Capsule())
-        .animation(.spring(response: 0.25, dampingFraction: 0.88), value: expanded)
+        .animation(.spring(response: 0.2, dampingFraction: 0.88), value: expanded)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .gesture(
-            DragGesture(minimumDistance: 5, coordinateSpace: .global)
+        .onChange(of: expanded) { _, isExpanded in
+            guard let window = paletteWindow else { return }
+            if isExpanded {
+                var frame = window.frame
+                frame.size.width = 850
+                if let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(frame) })
+                    ?? NSScreen.main {
+                    let vis = screen.visibleFrame
+                    frame.origin.x = max(vis.minX, min(frame.origin.x, vis.maxX - 850))
+                }
+                window.setFrame(frame, display: true)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    guard let window = paletteWindow else { return }
+                    var frame = window.frame
+                    frame.size.width = 48
+                    window.setFrame(frame, display: true)
+                }
+            }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 4)
                 .onChanged { _ in
-                    if !locked { moveWindow?(NSEvent.mouseLocation) }
+                    suppressTap = true
+                    let mouse = NSEvent.mouseLocation
+                    if dragMouseStart == nil {
+                        dragMouseStart = mouse
+                        dragOriginStart = paletteWindow?.frame.origin
+                    }
+                    guard let start = dragMouseStart,
+                          let origin = dragOriginStart,
+                          let window = paletteWindow else { return }
+                    var x = origin.x + (mouse.x - start.x)
+                    var y = origin.y + (mouse.y - start.y)
+                    if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) })
+                        ?? NSScreen.main {
+                        let vis = screen.visibleFrame
+                        let ws = window.frame.size
+                        x = max(vis.minX, min(x, vis.maxX - ws.width))
+                        y = max(vis.minY, min(y, vis.maxY - ws.height))
+                    }
+                    window.setFrameOrigin(NSPoint(x: x, y: y))
+                }
+                .onEnded { _ in
+                    dragMouseStart = nil
+                    dragOriginStart = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        suppressTap = false
+                    }
                 }
         )
     }
 
-    // MARK: - Selected tool (always visible)
+    private var paletteWindow: NSWindow? {
+        NSApp.windows.first { $0 is FloatingPaletteWindow }
+    }
 
     private var selectedToolButton: some View {
         Button {
-            if !expanded {
+            if !expanded && !suppressTap {
                 expanded = true
-            } else {
-                if !drawingState.isActive { overlayController?.activate() }
-                refocusCanvas?()
             }
         } label: {
             Image(systemName: drawingState.selectedTool.icon)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 30, height: 30)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color(nsColor: drawingState.selectedColor))
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
                 .background(
-                    Capsule()
-                        .fill(Color.accentColor.opacity(expanded ? 0.2 : 0))
+                    Circle()
+                        .fill(Color(nsColor: drawingState.selectedColor).opacity(expanded ? 0.15 : 0))
                 )
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Expanded content
-
     private var expandedContent: some View {
         HStack(spacing: 0) {
+            divider
+            drawToggle
             divider
             toolButtons
             divider
@@ -98,38 +145,47 @@ struct FloatingPaletteView: View {
             divider
             actionButtons
             divider
-            barControls
+            featureButtons
+            divider
+            collapseButton
         }
     }
 
-    private var toolButtons: some View {
-        HStack(spacing: 2) {
-            ForEach(DrawingTool.allCases, id: \.self) { tool in
-                if tool != drawingState.selectedTool {
-                    Button {
-                        drawingState.selectedTool = tool
-                        if !drawingState.isActive { overlayController?.activate() }
-                        refocusCanvas?()
-                    } label: {
-                        Image(systemName: tool.icon)
-                            .font(.system(size: 12))
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+    private var drawToggle: some View {
+        Button {
+            overlayController?.toggle()
+            refocusCanvas?()
+        } label: {
+            Image(systemName: drawingState.isActive ? "pencil.tip" : "pencil.slash")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+                .foregroundStyle(drawingState.isActive ? Color.primary : .secondary)
+                .background(
+                    Capsule()
+                        .fill(drawingState.isActive ? Color.accentColor.opacity(0.2) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+    }
 
-            if drawingState.selectedTool == .eraser {
+    private var toolButtons: some View {
+        HStack(spacing: 1) {
+            ForEach(DrawingTool.allCases, id: \.self) { tool in
                 Button {
-                    drawingState.eraserMode = drawingState.eraserMode == .stroke ? .area : .stroke
+                    drawingState.selectedTool = tool
+                    if !drawingState.isActive { overlayController?.activate() }
                     refocusCanvas?()
                 } label: {
-                    Text(drawingState.eraserMode == .stroke ? "S" : "A")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .frame(width: 20, height: 20)
+                    Image(systemName: tool.icon)
+                        .font(.system(size: 12))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                         .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.secondary.opacity(0.15))
+                            Capsule()
+                                .fill(drawingState.selectedTool == tool
+                                      ? Color(nsColor: drawingState.selectedColor).opacity(0.2)
+                                      : Color.clear)
                         )
                 }
                 .buttonStyle(.plain)
@@ -138,23 +194,26 @@ struct FloatingPaletteView: View {
     }
 
     private var colorDots: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<quickColors.count, id: \.self) { i in
+        let colors = drawingState.activePalette.nsColors
+        return HStack(spacing: 1) {
+            ForEach(0..<colors.count, id: \.self) { i in
                 Button {
-                    drawingState.selectedColor = quickColors[i]
+                    drawingState.selectedColor = colors[i]
                     refocusCanvas?()
                 } label: {
                     Circle()
-                        .fill(Color(nsColor: quickColors[i]))
+                        .fill(Color(nsColor: colors[i]))
                         .frame(width: 16, height: 16)
                         .overlay(
                             Circle().strokeBorder(
-                                isSelected(quickColors[i])
+                                isSelected(colors[i])
                                     ? Color.accentColor
                                     : Color.primary.opacity(0.12),
-                                lineWidth: isSelected(quickColors[i]) ? 2 : 0.5
+                                lineWidth: isSelected(colors[i]) ? 2 : 0.5
                             )
                         )
+                        .frame(width: 22, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -162,14 +221,15 @@ struct FloatingPaletteView: View {
     }
 
     private var sizeControl: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Button {
                 drawingState.lineWidth = max(1, drawingState.lineWidth - 1)
                 refocusCanvas?()
             } label: {
                 Image(systemName: "minus")
                     .font(.system(size: 9, weight: .bold))
-                    .frame(width: 18, height: 18)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -185,7 +245,8 @@ struct FloatingPaletteView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 9, weight: .bold))
-                    .frame(width: 18, height: 18)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -193,7 +254,7 @@ struct FloatingPaletteView: View {
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
             Button {
                 drawingState.undo()
                 overlayController?.refreshCanvases()
@@ -201,7 +262,8 @@ struct FloatingPaletteView: View {
             } label: {
                 Image(systemName: "arrow.uturn.backward")
                     .font(.system(size: 11))
-                    .frame(width: 26, height: 28)
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(drawingState.strokes.isEmpty)
@@ -213,7 +275,8 @@ struct FloatingPaletteView: View {
             } label: {
                 Image(systemName: "arrow.uturn.forward")
                     .font(.system(size: 11))
-                    .frame(width: 26, height: 28)
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(drawingState.undoneStrokes.isEmpty)
@@ -225,42 +288,75 @@ struct FloatingPaletteView: View {
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 11))
-                    .frame(width: 26, height: 28)
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(drawingState.strokes.isEmpty)
         }
     }
 
-    private var barControls: some View {
-        HStack(spacing: 2) {
+    private var featureButtons: some View {
+        HStack(spacing: 1) {
             Button {
-                locked.toggle()
+                drawingState.cycleBoardMode()
+                overlayController?.refreshCanvases()
+                refocusCanvas?()
             } label: {
-                Image(systemName: locked ? "lock.fill" : "lock.open")
-                    .font(.system(size: 10))
-                    .frame(width: 24, height: 28)
-                    .foregroundStyle(locked ? Color.accentColor : .secondary)
+                Image(systemName: drawingState.boardMode == .none
+                      ? "rectangle.inset.filled"
+                      : drawingState.boardMode == .white ? "sun.max" : "moon.fill")
+                    .font(.system(size: 11))
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
+                    .foregroundStyle(drawingState.boardMode != .none ? Color.primary : .secondary)
             }
             .buttonStyle(.plain)
 
             Button {
-                expanded = false
+                drawingState.screenshotMode = true
+                if !drawingState.isActive { overlayController?.activate() }
+                refocusCanvas?()
             } label: {
-                Image(systemName: "chevron.compact.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 24, height: 30)
+                Image(systemName: "camera.viewfinder")
+                    .font(.system(size: 11))
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+
+            Button {
+                drawingState.fadingInkEnabled.toggle()
+                refocusCanvas?()
+            } label: {
+                Image(systemName: drawingState.fadingInkEnabled ? "timer" : "timer")
+                    .font(.system(size: 11))
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
+                    .foregroundStyle(drawingState.fadingInkEnabled ? Color.orange : .secondary)
+            }
+            .buttonStyle(.plain)
         }
+    }
+
+    private var collapseButton: some View {
+        Button {
+            expanded = false
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 9, weight: .medium))
+                .frame(width: 24, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tertiary)
     }
 
     private var divider: some View {
         RoundedRectangle(cornerRadius: 0.5)
-            .fill(Color.primary.opacity(0.1))
-            .frame(width: 1, height: 22)
-            .padding(.horizontal, 5)
+            .fill(Color.primary.opacity(0.08))
+            .frame(width: 1, height: 20)
+            .padding(.horizontal, 4)
     }
 
     private func isSelected(_ color: NSColor) -> Bool {

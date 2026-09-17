@@ -11,12 +11,60 @@ final class OverlayController {
     private var eventHandlerRef: EventHandlerRef?
 
     private var paletteWindow: FloatingPaletteWindow?
+    private var colorObserver: Any?
+    private var screenObserver: Any?
+    private var fadeTimer: Timer?
+
+    var paletteVisible: Bool {
+        paletteWindow?.isVisible ?? false
+    }
 
     init(drawingState: DrawingState, appDelegate: AppDelegate) {
         self.drawingState = drawingState
         self.appDelegate = appDelegate
         registerGlobalHotKeys()
         showPalette()
+        colorObserver = NotificationCenter.default.addObserver(
+            forName: NSColorPanel.colorDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let color = NSColorPanel.shared.color
+            if self.drawingState.editingPaletteId != nil {
+                self.drawingState.updatePaletteColor(color)
+            } else {
+                self.drawingState.selectedColor = color
+            }
+        }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleScreenChange()
+        }
+    }
+
+    func openColorPicker(editingPaletteId: String? = nil, colorIndex: Int? = nil, startColor: NSColor? = nil) {
+        drawingState.editingPaletteId = editingPaletteId
+        drawingState.editingColorIndex = colorIndex
+        let panel = NSColorPanel.shared
+        panel.color = startColor ?? drawingState.selectedColor
+        panel.isContinuous = true
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 2)
+        panel.orderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func togglePalette() {
+        if let window = paletteWindow, window.isVisible {
+            window.orderOut(nil)
+        } else if let window = paletteWindow {
+            window.orderFrontRegardless()
+        } else {
+            showPalette()
+        }
     }
 
     // MARK: - Overlay
@@ -28,7 +76,18 @@ final class OverlayController {
     func activate() {
         guard !drawingState.isActive else { return }
         drawingState.isActive = true
+        rebuildOverlayWindows()
+        NSApp.activate(ignoringOtherApps: true)
+        if let first = overlayWindows.first {
+            first.makeKey()
+            first.contentView?.becomeFirstResponder()
+        }
+    }
 
+    private func rebuildOverlayWindows() {
+        let old = overlayWindows
+        overlayWindows.removeAll()
+        canvasViews.removeAll()
         for screen in NSScreen.screens {
             let window = OverlayWindow(screen: screen)
             let canvas = DrawingCanvasView(
@@ -38,17 +97,25 @@ final class OverlayController {
             )
             canvas.autoresizingMask = [.width, .height]
             window.contentView = canvas
-            window.ignoresMouseEvents = false
+            window.ignoresMouseEvents = !drawingState.isActive
             window.sharingType = drawingState.visibleInCapture ? .readWrite : .none
             window.orderFrontRegardless()
             overlayWindows.append(window)
             canvasViews.append(canvas)
         }
+        for window in old { window.orderOut(nil) }
+    }
 
-        NSApp.activate(ignoringOtherApps: true)
-        if let first = overlayWindows.first {
-            first.makeKey()
-            first.contentView?.becomeFirstResponder()
+    private func handleScreenChange() {
+        if drawingState.isActive {
+            rebuildOverlayWindows()
+            NSApp.activate(ignoringOtherApps: true)
+            if let first = overlayWindows.first {
+                first.makeKey()
+                first.contentView?.becomeFirstResponder()
+            }
+        } else if !overlayWindows.isEmpty {
+            rebuildOverlayWindows()
         }
     }
 
@@ -56,12 +123,12 @@ final class OverlayController {
         guard drawingState.isActive else { return }
         drawingState.isActive = false
 
+        for canvas in canvasViews {
+            canvas.cleanup()
+        }
         for window in overlayWindows {
             window.ignoresMouseEvents = true
-            window.orderOut(nil)
         }
-        overlayWindows.removeAll()
-        canvasViews.removeAll()
     }
 
     func refreshCanvases() {
@@ -70,7 +137,18 @@ final class OverlayController {
         }
     }
 
+    func refreshOtherCanvases(except source: DrawingCanvasView) {
+        for canvas in canvasViews where canvas !== source {
+            canvas.needsDisplay = true
+        }
+    }
+
     func refocusCanvas() {
+        for canvas in canvasViews {
+            if drawingState.selectedTool != .text {
+                canvas.commitText()
+            }
+        }
         if let first = overlayWindows.first {
             first.makeKey()
             first.contentView?.becomeFirstResponder()
@@ -84,6 +162,56 @@ final class OverlayController {
         }
     }
 
+    // MARK: - Screenshot
+
+    func captureScreenshot(rect: CGRect, fromScreen screen: NSScreen?) {
+        guard let screen else { return }
+        let mainHeight = NSScreen.screens[0].frame.height
+        let gx = screen.frame.origin.x + rect.origin.x
+        let gy = screen.frame.origin.y + rect.origin.y
+        let displayRect = CGRect(
+            x: gx,
+            y: mainHeight - gy - rect.height,
+            width: rect.width,
+            height: rect.height
+        )
+
+        let wasHidden = !drawingState.visibleInCapture
+        if wasHidden {
+            for window in overlayWindows { window.sharingType = .readWrite }
+        }
+
+        guard let cgImage = CGWindowListCreateImage(
+            displayRect, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution]
+        ) else {
+            if wasHidden { updateSharingType() }
+            return
+        }
+
+        if wasHidden { updateSharingType() }
+
+        let image = NSImage(cgImage: cgImage, size: rect.size)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([image])
+        NSSound(named: "Tink")?.play()
+    }
+
+    // MARK: - Fading Ink Timer
+
+    func startFadeTimerIfNeeded() {
+        guard fadeTimer == nil,
+              drawingState.strokes.contains(where: { $0.createdAt != nil }) else { return }
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.drawingState.removeExpiredStrokes()
+            self.refreshCanvases()
+            if !self.drawingState.strokes.contains(where: { $0.createdAt != nil }) {
+                self.fadeTimer?.invalidate()
+                self.fadeTimer = nil
+            }
+        }
+    }
+
     // MARK: - Floating Palette
 
     private func showPalette() {
@@ -92,22 +220,18 @@ final class OverlayController {
         let view = FloatingPaletteView(
             drawingState: drawingState,
             overlayController: self,
-            moveWindow: { [weak window] screenPoint in
-                guard let window else { return }
-                window.setFrameOrigin(NSPoint(
-                    x: screenPoint.x - 20,
-                    y: screenPoint.y - 20
-                ))
-            },
             refocusCanvas: { [weak self] in
                 DispatchQueue.main.async { self?.refocusCanvas() }
             }
         )
 
-        let barSize = NSSize(width: 520, height: 42)
+        let barSize = NSSize(width: 850, height: 42)
+        let container = PaletteDragView(frame: NSRect(origin: .zero, size: barSize))
         let hostingView = NSHostingView(rootView: view)
-        hostingView.frame = NSRect(origin: .zero, size: barSize)
-        window.contentView = hostingView
+        hostingView.frame = container.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        container.addSubview(hostingView)
+        window.contentView = container
 
         if let screen = NSScreen.main {
             let x = screen.frame.midX - barSize.width / 2
@@ -164,6 +288,9 @@ final class OverlayController {
     }
 
     deinit {
+        fadeTimer?.invalidate()
         for ref in hotKeyRefs { UnregisterEventHotKey(ref) }
+        if let colorObserver { NotificationCenter.default.removeObserver(colorObserver) }
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
     }
 }
