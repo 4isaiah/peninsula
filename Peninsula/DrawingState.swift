@@ -96,8 +96,9 @@ struct ColorPalette: Codable, Identifiable {
     var colors: [[CGFloat]]
 
     var nsColors: [NSColor] {
-        colors.map { c in
-            NSColor(red: c[0], green: c[1], blue: c[2], alpha: c.count > 3 ? c[3] : 1.0)
+        colors.compactMap { c in
+            guard c.count >= 3 else { return nil }
+            return NSColor(red: c[0], green: c[1], blue: c[2], alpha: c.count > 3 ? c[3] : 1.0)
         }
     }
 
@@ -293,6 +294,7 @@ final class DrawingState {
         strokes.removeAll()
         undoneStrokes.removeAll()
         currentStroke = nil
+        boardMode = .none
     }
 
     // MARK: - Persistence

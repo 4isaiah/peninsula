@@ -141,11 +141,10 @@ final class DrawingCanvasView: NSView, NSTextFieldDelegate {
             }
         case .text:
             if let text = stroke.text, let origin = stroke.points.first {
-                ctx.restoreGState()
                 drawText(text, at: origin, color: stroke.color,
                          fontSize: stroke.fontSize ?? 18,
-                         fontName: stroke.fontName ?? "Helvetica Neue")
-                return
+                         fontName: stroke.fontName ?? "Helvetica Neue",
+                         opacity: effectiveOpacity)
             }
         case .eraser:
             break
@@ -154,11 +153,11 @@ final class DrawingCanvasView: NSView, NSTextFieldDelegate {
     }
 
     private func drawText(_ text: String, at point: CGPoint, color: NSColor,
-                          fontSize: CGFloat, fontName: String) {
+                          fontSize: CGFloat, fontName: String, opacity: CGFloat = 1.0) {
         let font = NSFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: color
+            .foregroundColor: color.withAlphaComponent(opacity)
         ]
         let str = NSAttributedString(string: text, attributes: attrs)
         str.draw(at: point)
@@ -409,6 +408,7 @@ final class DrawingCanvasView: NSView, NSTextFieldDelegate {
         if flags.contains(.command) && chars == "z" {
             if flags.contains(.shift) { drawingState.redo() } else { drawingState.undo() }
             overlayController?.refreshCanvases()
+            overlayController?.startFadeTimerIfNeeded()
             return
         }
         if flags.contains(.command) && flags.contains(.shift) && chars == "x" {

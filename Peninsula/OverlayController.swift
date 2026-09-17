@@ -122,6 +122,7 @@ final class OverlayController {
     func deactivate() {
         guard drawingState.isActive else { return }
         drawingState.isActive = false
+        drawingState.screenshotMode = false
 
         for canvas in canvasViews {
             canvas.cleanup()
@@ -165,8 +166,8 @@ final class OverlayController {
     // MARK: - Screenshot
 
     func captureScreenshot(rect: CGRect, fromScreen screen: NSScreen?) {
-        guard let screen else { return }
-        let mainHeight = NSScreen.screens[0].frame.height
+        guard let screen, let mainScreen = NSScreen.screens.first else { return }
+        let mainHeight = mainScreen.frame.height
         let gx = screen.frame.origin.x + rect.origin.x
         let gy = screen.frame.origin.y + rect.origin.y
         let displayRect = CGRect(
