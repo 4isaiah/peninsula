@@ -1,14 +1,37 @@
 # Peninsula
 
-Free, open-source screen annotation tool for macOS. Draw on your screen during presentations, meetings, or tutorials.
+A free, open-source screen drawing tool for macOS. Think Epic Pen, but for Mac.
+
+I built this because I wanted a simple way to draw on my screen during presentations and calls — highlight stuff, sketch quick diagrams, point things out. Everything else I found was either paid, bloated, or Windows-only. So I made my own.
+
+## What it does
+
+- **Draw on your screen** — pen, highlighter, arrows, rectangles, circles, lines, text
+- **Whiteboard / blackboard mode** — solid background for teaching or brainstorming
+- **Screenshot capture** — select a region, goes straight to clipboard
+- **Fading ink** — strokes disappear after a few seconds (great for presentations)
+- **Color palettes** — 6 built-in, make your own
+- **Multi-monitor** — works across all your displays
+- **Stays out of your way** — lives in the menu bar, toggle on/off with a hotkey
+
+## Tech
+
+- Swift + SwiftUI + AppKit
+- `NSPanel` overlays at screen-saver window level for click-through drawing
+- Core Graphics for rendering (Bézier smoothing, shape tools)
+- Carbon `RegisterEventHotKey` for global shortcuts
+- `CGWindowListCreateImage` for screenshot capture
+- `@Observable` for state management
+- No dependencies, no frameworks, just Apple APIs
 
 ## Install
 
 **Download:** Grab `Peninsula.zip` from [Releases](https://github.com/4isaiah/peninsula/releases), unzip, drag to Applications.
 
-> First launch: right-click the app → Open (bypasses Gatekeeper since the app isn't signed).
+> First launch: right-click the app → **Open** (it's unsigned, so macOS will ask you to confirm once).
 
 **Build from source:**
+
 ```bash
 git clone https://github.com/4isaiah/peninsula.git
 cd peninsula
@@ -16,37 +39,23 @@ xcodebuild -scheme Peninsula -configuration Release build
 open ~/Library/Developer/Xcode/DerivedData/peninsula-*/Build/Products/Release/Peninsula.app
 ```
 
-## Features
+Requires macOS 14+ and Xcode 15+.
 
-- **Drawing tools** — pen, highlighter, arrow, rectangle, ellipse, line, text, eraser
-- **Shape smoothing** — freehand strokes are automatically smoothed
-- **Color palettes** — 6 built-in palettes + custom palette support
-- **Whiteboard / blackboard mode** — solid background for teaching
-- **Screenshot capture** — select a region, copied to clipboard
-- **Fading ink** — strokes that disappear after 3/5/10 seconds
-- **Multi-monitor** — overlays span all connected displays
-- **Menu bar app** — lives in your menu bar, out of the way
+## Usage
 
-## Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Cmd+Shift+D` | Toggle drawing overlay |
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+Shift+D` | Toggle drawing on/off |
 | `Cmd+Shift+P` | Open settings |
-| `1-8` | Select tool |
-| `+/-` | Brush size |
-| `W` | Cycle whiteboard/blackboard |
+| `1`–`8` | Switch tools |
+| `+` / `-` | Brush size |
+| `W` | Whiteboard / blackboard |
 | `S` | Screenshot mode |
-| `F` | Toggle fading ink |
-| `Cmd+Z` | Undo |
-| `Cmd+Shift+Z` | Redo |
-| `Cmd+Shift+X` | Clear all |
-| `Esc` | Deactivate overlay |
-
-## Requirements
-
-macOS 14+
+| `F` | Fading ink |
+| `T` | Toggle floating toolbar |
+| `Cmd+Z` / `Cmd+Shift+Z` | Undo / redo |
+| `Esc` | Deactivate |
 
 ## License
 
-MIT
+MIT — do whatever you want with it. Free forever.

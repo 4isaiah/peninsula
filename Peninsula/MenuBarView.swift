@@ -393,6 +393,7 @@ struct MenuBarView: View {
                     shortcutRow("Whiteboard", shortcut: "W", icon: "rectangle.inset.filled")
                     shortcutRow("Screenshot", shortcut: "S", icon: "camera.viewfinder")
                     shortcutRow("Fading ink", shortcut: "F", icon: "timer")
+                    shortcutRow("Toggle toolbar", shortcut: "T", icon: "paintpalette")
 
                     Divider()
 

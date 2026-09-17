@@ -445,6 +445,7 @@ final class DrawingCanvasView: NSView, NSTextFieldDelegate {
             case "w": drawingState.cycleBoardMode(); overlayController?.refreshCanvases()
             case "s": drawingState.screenshotMode = true
             case "f": drawingState.fadingInkEnabled.toggle()
+            case "t": overlayController?.togglePalette()
             default: return
             }
         }
