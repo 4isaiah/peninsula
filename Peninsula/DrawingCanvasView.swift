@@ -405,13 +405,13 @@ final class DrawingCanvasView: NSView, NSTextFieldDelegate {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let chars = event.charactersIgnoringModifiers ?? ""
 
-        if flags.contains(.command) && chars == "z" {
+        if flags.contains(.command) && chars.lowercased() == "z" {
             if flags.contains(.shift) { drawingState.redo() } else { drawingState.undo() }
             overlayController?.refreshCanvases()
             overlayController?.startFadeTimerIfNeeded()
             return
         }
-        if flags.contains(.command) && flags.contains(.shift) && chars == "x" {
+        if flags.contains(.command) && flags.contains(.shift) && chars.lowercased() == "x" {
             drawingState.clearAll()
             overlayController?.refreshCanvases()
             return
