@@ -6,8 +6,10 @@ final class OverlayController {
     let drawingState: DrawingState
     weak var appDelegate: AppDelegate?
     private(set) var overlayWindows: [OverlayWindow] = []
-    private var canvasViews: [DrawingCanvasView] = []
-    private var hotKeyRefs: [EventHotKeyRef] = []
+    private(set) var canvasViews: [DrawingCanvasView] = []
+    private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
+    private(set) var hotKeyStatus: [UInt32: OSStatus] = [:]
+    private var previousApp: NSRunningApplication?
     private var eventHandlerRef: EventHandlerRef?
 
     private var paletteWindow: FloatingPaletteWindow?
@@ -23,6 +25,7 @@ final class OverlayController {
         self.drawingState = drawingState
         self.appDelegate = appDelegate
         registerGlobalHotKeys()
+        syncClearHotKey()
         showPalette()
         colorObserver = NotificationCenter.default.addObserver(
             forName: NSColorPanel.colorDidChangeNotification,
@@ -75,6 +78,9 @@ final class OverlayController {
 
     func activate() {
         guard !drawingState.isActive else { return }
+        if let front = NSWorkspace.shared.frontmostApplication, front != .current {
+            previousApp = front
+        }
         drawingState.isActive = true
         rebuildOverlayWindows()
         NSApp.activate(ignoringOtherApps: true)
@@ -129,9 +135,14 @@ final class OverlayController {
         }
         for window in overlayWindows {
             window.ignoresMouseEvents = true
-            window.orderOut(nil)
         }
         NSCursor.arrow.set()
+        // Hand the keyboard and cursor straight back to the app the user was in.
+        if let previousApp {
+            NSApp.yieldActivation(to: previousApp)
+            previousApp.activate(from: .current, options: [])
+        }
+        previousApp = nil
     }
 
     func refreshCanvases() {
@@ -147,6 +158,7 @@ final class OverlayController {
     }
 
     func refocusCanvas() {
+        guard drawingState.isActive else { return }
         for canvas in canvasViews {
             if drawingState.selectedTool != .text {
                 canvas.commitText()
@@ -268,31 +280,51 @@ final class OverlayController {
                 switch hotKeyID.id {
                 case 1: controller.toggle()
                 case 2: controller.appDelegate?.showPopover()
+                case 3:
+                    controller.drawingState.clearAll()
+                    controller.refreshCanvases()
                 default: break
                 }
             }
             return noErr
         }, 1, &eventType, selfPtr, &eventHandlerRef)
 
-        registerHotKey(id: 1, keyCode: 2, modifiers: UInt32(cmdKey | shiftKey))   // Cmd+Shift+D
-        registerHotKey(id: 2, keyCode: 35, modifiers: UInt32(cmdKey | shiftKey))   // Cmd+Shift+P
+        registerHotKey(id: 1, keyCode: 2)    // Cmd+Shift+D
+        registerHotKey(id: 2, keyCode: 35)   // Cmd+Shift+P
     }
 
-    private func registerHotKey(id: UInt32, keyCode: UInt32, modifiers: UInt32) {
-        var hotKeyID = EventHotKeyID()
-        hotKeyID.signature = OSType(0x504E5354)
-        hotKeyID.id = id
-
-        var ref: EventHotKeyRef?
-        if RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref) == noErr,
-           let ref {
-            hotKeyRefs.append(ref)
+    // Cmd+Shift+X is only claimed while there is something to clear, so other apps keep it otherwise.
+    private func syncClearHotKey() {
+        let wanted = withObservationTracking {
+            drawingState.isActive || !drawingState.strokes.isEmpty || drawingState.boardMode != .none
+        } onChange: { [weak self] in
+            DispatchQueue.main.async { self?.syncClearHotKey() }
         }
+        if wanted { registerHotKey(id: 3, keyCode: 7) } else { unregisterHotKey(id: 3) }
+    }
+
+    static let hotKeySignature = OSType(0x504E5354)
+
+    private func registerHotKey(id: UInt32, keyCode: UInt32) {
+        guard hotKeyRefs[id] == nil else { return }
+        var ref: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            keyCode, UInt32(cmdKey | shiftKey),
+            EventHotKeyID(signature: Self.hotKeySignature, id: id),
+            GetApplicationEventTarget(), 0, &ref
+        )
+        hotKeyStatus[id] = status
+        if status == noErr, let ref { hotKeyRefs[id] = ref }
+    }
+
+    private func unregisterHotKey(id: UInt32) {
+        if let ref = hotKeyRefs.removeValue(forKey: id) { UnregisterEventHotKey(ref) }
+        hotKeyStatus[id] = nil
     }
 
     deinit {
         fadeTimer?.invalidate()
-        for ref in hotKeyRefs { UnregisterEventHotKey(ref) }
+        for ref in hotKeyRefs.values { UnregisterEventHotKey(ref) }
         if let colorObserver { NotificationCenter.default.removeObserver(colorObserver) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
     }

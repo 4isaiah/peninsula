@@ -29,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = hosting
+
+        SelfTest.runIfRequested(self)
     }
 
     @objc private func togglePopover() {
