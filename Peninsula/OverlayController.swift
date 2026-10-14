@@ -298,6 +298,11 @@ final class OverlayController {
                 switch hotKeyID.id {
                 case 1: controller.toggle()
                 case 2: controller.appDelegate?.showPopover()
+                case 3:
+                    if controller.drawingState.isActive {
+                        controller.drawingState.clearAll()
+                        controller.refreshCanvases()
+                    }
                 default: break
                 }
             }
@@ -306,6 +311,7 @@ final class OverlayController {
 
         registerHotKey(id: 1, keyCode: 2, modifiers: UInt32(cmdKey | shiftKey))   // Cmd+Shift+D
         registerHotKey(id: 2, keyCode: 35, modifiers: UInt32(cmdKey | shiftKey))   // Cmd+Shift+P
+        registerHotKey(id: 3, keyCode: 7, modifiers: UInt32(cmdKey | shiftKey))    // Cmd+Shift+X
     }
 
     private func registerHotKey(id: UInt32, keyCode: UInt32, modifiers: UInt32) {
