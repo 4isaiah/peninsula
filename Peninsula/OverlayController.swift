@@ -14,7 +14,6 @@ final class OverlayController {
     private var colorObserver: Any?
     private var screenObserver: Any?
     private var fadeTimer: Timer?
-    private var keyMonitor: Any?
 
     var paletteVisible: Bool {
         paletteWindow?.isVisible ?? false
@@ -78,7 +77,6 @@ final class OverlayController {
         guard !drawingState.isActive else { return }
         drawingState.isActive = true
         rebuildOverlayWindows()
-        installKeyMonitor()
         NSApp.activate(ignoringOtherApps: true)
         if let first = overlayWindows.first {
             first.makeKey()
@@ -125,43 +123,15 @@ final class OverlayController {
         guard drawingState.isActive else { return }
         drawingState.isActive = false
         drawingState.screenshotMode = false
-        removeKeyMonitor()
 
         for canvas in canvasViews {
             canvas.cleanup()
         }
         for window in overlayWindows {
             window.ignoresMouseEvents = true
+            window.orderOut(nil)
         }
-    }
-
-    private func installKeyMonitor() {
-        guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.drawingState.isActive else { return event }
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
-
-            if flags.contains(.command) && flags.contains(.shift) && chars == "x" {
-                self.drawingState.clearAll()
-                self.refreshCanvases()
-                return nil
-            }
-            if flags.contains(.command) && chars == "z" {
-                if flags.contains(.shift) { self.drawingState.redo() } else { self.drawingState.undo() }
-                self.refreshCanvases()
-                self.startFadeTimerIfNeeded()
-                return nil
-            }
-            return event
-        }
-    }
-
-    private func removeKeyMonitor() {
-        if let monitor = keyMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
-        }
+        NSCursor.arrow.set()
     }
 
     func refreshCanvases() {
@@ -298,11 +268,6 @@ final class OverlayController {
                 switch hotKeyID.id {
                 case 1: controller.toggle()
                 case 2: controller.appDelegate?.showPopover()
-                case 3:
-                    if controller.drawingState.isActive {
-                        controller.drawingState.clearAll()
-                        controller.refreshCanvases()
-                    }
                 default: break
                 }
             }
@@ -311,7 +276,6 @@ final class OverlayController {
 
         registerHotKey(id: 1, keyCode: 2, modifiers: UInt32(cmdKey | shiftKey))   // Cmd+Shift+D
         registerHotKey(id: 2, keyCode: 35, modifiers: UInt32(cmdKey | shiftKey))   // Cmd+Shift+P
-        registerHotKey(id: 3, keyCode: 7, modifiers: UInt32(cmdKey | shiftKey))    // Cmd+Shift+X
     }
 
     private func registerHotKey(id: UInt32, keyCode: UInt32, modifiers: UInt32) {
@@ -328,7 +292,6 @@ final class OverlayController {
 
     deinit {
         fadeTimer?.invalidate()
-        removeKeyMonitor()
         for ref in hotKeyRefs { UnregisterEventHotKey(ref) }
         if let colorObserver { NotificationCenter.default.removeObserver(colorObserver) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }

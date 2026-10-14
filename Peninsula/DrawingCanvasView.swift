@@ -401,21 +401,25 @@ final class DrawingCanvasView: NSView, NSTextFieldDelegate {
 
     // MARK: - Keyboard
 
-    override func keyDown(with event: NSEvent) {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let chars = event.charactersIgnoringModifiers ?? ""
+        let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
 
-        if flags.contains(.command) && chars.lowercased() == "z" {
+        if flags.contains(.command) && chars == "z" {
             if flags.contains(.shift) { drawingState.redo() } else { drawingState.undo() }
             overlayController?.refreshCanvases()
             overlayController?.startFadeTimerIfNeeded()
-            return
+            return true
         }
-        if flags.contains(.command) && flags.contains(.shift) && chars.lowercased() == "x" {
+        if flags.contains(.command) && flags.contains(.shift) && chars == "x" {
             drawingState.clearAll()
             overlayController?.refreshCanvases()
-            return
+            return true
         }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
             if drawingState.screenshotMode {
                 drawingState.screenshotMode = false
@@ -429,8 +433,17 @@ final class DrawingCanvasView: NSView, NSTextFieldDelegate {
             return
         }
 
+        // Delete key (backspace) = clear all
+        if event.keyCode == 51 {
+            drawingState.clearAll()
+            overlayController?.refreshCanvases()
+            return
+        }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let bare = flags.subtracting(.capsLock).isEmpty
         if bare {
+            let chars = event.charactersIgnoringModifiers ?? ""
             switch chars {
             case "1": commitText(); drawingState.selectedTool = .pen
             case "2": commitText(); drawingState.selectedTool = .highlighter
